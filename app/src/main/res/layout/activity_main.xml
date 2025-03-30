@@ -1,0 +1,75 @@
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/background_image"
+    tools:context=".MainActivity">
+
+    <TextView
+        android:id="@+id/connectionStatusLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Disconnected"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="16dp"
+        android:textSize="18sp" />
+
+    <TextView
+        android:id="@+id/responseLabel"
+        android:layout_width="100dp"
+        android:layout_height="100dp"
+        android:layout_centerHorizontal="true"
+        android:layout_alignParentBottom="true"
+        android:layout_marginBottom="30dp"
+        android:background="@drawable/circle_shape"
+        android:gravity="center"
+        android:text="Response"
+        android:textSize="18sp" />
+
+    <Button
+        android:id="@+id/lockButton"
+        android:layout_width="140dp"
+        android:layout_height="wrap_content"
+        android:text="Lock"
+        android:layout_alignParentBottom="true"
+        android:layout_alignParentStart="true"
+        android:layout_margin="16dp"
+        android:background="@drawable/button_background" />
+
+    <Button
+        android:id="@+id/unlockButton"
+        android:layout_width="140dp"
+        android:layout_height="wrap_content"
+        android:text="Unlock"
+        android:layout_alignParentBottom="true"
+        android:layout_alignParentEnd="true"
+        android:layout_margin="16dp"
+        android:background="@drawable/button_background" />
+
+    <Button
+        android:id="@+id/trunkButton"
+        android:layout_width="140dp"
+        android:layout_height="wrap_content"
+        android:text="Trunk"
+        android:layout_above="@id/lockButton"
+        android:layout_alignParentStart="true"
+        android:layout_margin="16dp"
+        android:background="@drawable/button_background" />
+
+    <Button
+        android:id="@+id/locateMeButton"
+        android:layout_width="140dp"
+        android:layout_height="wrap_content"
+        android:layout_above="@id/unlockButton"
+        android:layout_alignParentEnd="true"
+        android:layout_margin="16dp"
+        android:text="Locate Me"
+        android:background="@drawable/button_background" />
+
+    <TextView
+        android:id="@+id/logTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Log" />
+
+</RelativeLayout>

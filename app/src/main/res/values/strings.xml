@@ -1,0 +1,10 @@
+<resources>
+    <string name="connected">Connected</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="command_lock">LOCK</string>
+    <string name="command_unlock">UNLOCK</string>
+    <string name="command_trunk">TRUNK</string>
+    <string name="ble_operation_failed">BLE operation failed: %1$s</string>
+	<string name="app_name">BLE Client Activity</string>
+</resources>
+
