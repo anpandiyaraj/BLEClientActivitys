@@ -65,7 +65,7 @@ class MainActivity : AppCompatActivity() {
     private val SERVICE_UUID = UUID.fromString("a1c658ed-1df2-4c5c-8477-708f714f01f7")
     private val CHAR_WRITE_UUID = UUID.fromString("f16c9c3c-fbcc-4a8c-b130-0e79948b8f82")
     private val CHAR_NOTIFY_UUID = UUID.fromString("7dc6ca3d-f066-4bda-a742-4deb534b58d5")
-    private val ESP32_MAC_ADDRESS = "5E:01:3C:96:FD:56"
+    private val ESP32_MAC_ADDRESS = "5C:01:3B:96:DD:56"
     private val PASSKEY = "123456"
 
     private lateinit var enableBluetoothLauncher: ActivityResultLauncher<Intent>
@@ -383,7 +383,7 @@ class MainActivity : AppCompatActivity() {
         logMethodCall("setupButtons")
         lockButton.setOnClickListener {
             logMethodCall("lockButton onClick")
-            writeToCharacteristic(CHAR_WRITE_UUID, "Lock")
+            writeToCharacteristic(CHAR_WRITE_UUID, "LOCK")
             lockStatus = "locked"
             isLockButtonPressedManually = true
             lockButton.isEnabled = false
@@ -391,7 +391,7 @@ class MainActivity : AppCompatActivity() {
         }
         unlockButton.setOnClickListener {
             logMethodCall("unlockButton onClick")
-            writeToCharacteristic(CHAR_WRITE_UUID, "UnLock")
+            writeToCharacteristic(CHAR_WRITE_UUID, "UNLOCK")
             lockStatus = "unlocked"
             isLockButtonPressedManually = false
             lockButton.isEnabled = true
@@ -399,11 +399,11 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.trunkButton).setOnClickListener {
             logMethodCall("trunkButton onClick")
-            writeToCharacteristic(CHAR_WRITE_UUID, "Trunk Release")
+            writeToCharacteristic(CHAR_WRITE_UUID, "TRUNK")
         }
         locateMeButton.setOnClickListener {
             logMethodCall("locateMeButton onClick")
-            writeToCharacteristic(CHAR_WRITE_UUID, "Locate Me")
+            writeToCharacteristic(CHAR_WRITE_UUID, "LOCATE")
         }
     }
 
