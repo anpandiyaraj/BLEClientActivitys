@@ -2,6 +2,7 @@ package com.anpan.bleclientactivitys
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.bluetooth.*
 import android.bluetooth.le.*
 import android.content.BroadcastReceiver
@@ -17,6 +18,8 @@ import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.TextView
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import java.nio.charset.Charset
@@ -56,6 +59,8 @@ class MainActivity : AppCompatActivity() {
     private val CHAR_NOTIFY_UUID = UUID.fromString("7dc6ca3d-f066-4bda-a742-4deb534b58d5")
     private val ESP32_MAC_ADDRESS = "5C:01:3B:96:DD:56"
     private val PASSKEY = "123456"
+
+    private lateinit var enableBluetoothLauncher: ActivityResultLauncher<Intent>
 
     private val bondStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -125,22 +130,39 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val scanCallback = object : ScanCallback() {
+        @SuppressLint("MissingPermission")
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             logMethodCall("onScanResult")
-            val deviceName = if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                result.device.name ?: "Unknown Device"
-            } else {
-                "Unknown Device"
-            }
+            val deviceName = result.device.name ?: "Unknown Device"
             val deviceAddress = result.device.address
-            if (deviceAddress == ESP32_MAC_ADDRESS) {
-                logTextView.append("Found device: $deviceName ($deviceAddress)\n")
-                Log.d("BLEScan", "Found device: $deviceName ($deviceAddress)")
-            }
+            val rssi = result.rssi
+
+            Log.d("BLEScan", "Found device: $deviceName ($deviceAddress) RSSI: $rssi")
+
 
             if (deviceAddress == ESP32_MAC_ADDRESS) {
+                logMethodCall("Found device: $deviceName ($deviceAddress) RSSI: $rssi\n")
+                Log.d("BLEScan", "Found target device: $deviceName ($deviceAddress)")
                 stopBleScan()
                 connectToDevice(result.device)
+            }
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onScanFailed(errorCode: Int) {
+            val errorMessage = when (errorCode) {
+                ScanCallback.SCAN_FAILED_ALREADY_STARTED -> "Scan already started"
+                ScanCallback.SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "Application registration failed"
+                ScanCallback.SCAN_FAILED_INTERNAL_ERROR -> "Internal error"
+                ScanCallback.SCAN_FAILED_FEATURE_UNSUPPORTED -> "Feature unsupported"
+                else -> "Unknown error code $errorCode"
+            }
+            Log.e("BLEScan", "Scan failed: $errorMessage")
+            isScanning = false
+
+            // Retry after delay if not connected
+            if (bluetoothGatt?.device?.bondState != BluetoothDevice.BOND_BONDED) {
+                handler.postDelayed({ startBleScan() }, SCAN_INTERVAL)
             }
         }
     }
@@ -159,6 +181,7 @@ class MainActivity : AppCompatActivity() {
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     runOnUiThread {
+                        logMethodCall(getString(R.string.connected))
                         connectionStatusLabel.text = getString(R.string.connected)
                         connectionStatusLabel.setTextColor(getColor(R.color.green))
                         locateMeButton.isEnabled = true // Enable Locate Me button on connection
@@ -242,6 +265,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 if (value != null) {
                     responseLabel.text = value
+                    logMethodCall(value)
                     handleCharacteristicChanged(value)
                 }
             }
@@ -252,7 +276,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
+        checkPermissions()
         bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
         connectionStatusLabel = findViewById(R.id.connectionStatusLabel)
@@ -266,6 +290,16 @@ class MainActivity : AppCompatActivity() {
         unlockButton.isEnabled = false // Disable unlock button by default
         locateMeButton.isEnabled = false // Disable Locate Me button by default
         setupButtons()
+
+        enableBluetoothLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                // Bluetooth has been enabled, start BLE scan
+                startBleScan()
+            } else {
+                // Bluetooth was not enabled, handle accordingly
+                Log.e("MainActivity", "Bluetooth not enabled")
+            }
+        }
 
         registerReceiver(bondStateReceiver, IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED))
         registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
@@ -301,7 +335,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    @SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission", "NewApi")
     private fun writeToCharacteristic(uuid: UUID, command: String) {
         logMethodCall("writeToCharacteristic")
         val characteristic = bluetoothGatt?.getService(SERVICE_UUID)?.getCharacteristic(uuid)
@@ -309,49 +343,81 @@ class MainActivity : AppCompatActivity() {
             Log.e("BLEWrite", "Characteristic not found")
             return
         }
-        characteristic.value = command.toByteArray()
-        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-            handler.post {
-                val success = bluetoothGatt?.writeCharacteristic(characteristic) ?: false
-                if (!success) {
-                    Log.e("BLEWrite", "Failed to write characteristic")
+
+        bluetoothGatt?.let { gatt ->
+            val writeType = characteristic.writeType
+            characteristic.value = command.toByteArray()
+
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                handler.post {
+                    val success = gatt.writeCharacteristic(characteristic)
+                    if (success == null) {
+                        Log.e("BLEWrite", "Failed to write characteristic")
+                    }
                 }
             }
+        }
+    }
+    private val requestMultiplePermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+        permissions.entries.forEach {
+            Log.d("MainActivity", "${it.key} = ${it.value}")
+        }
+    }
+
+    private fun checkPermissions() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            requestMultiplePermissions.launch(arrayOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ))
         }
     }
 
     private fun startBleScan() {
         logMethodCall("startBleScan")
+
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            Log.d("BLEScan", "Bluetooth connect permission not granted")
             ActivityCompat.requestPermissions(this, arrayOf(
                 Manifest.permission.BLUETOOTH_SCAN,
                 Manifest.permission.BLUETOOTH_CONNECT
             ), 1)
             return
         }
-        if (!bluetoothAdapter.isEnabled) {
+
+        if (bluetoothAdapter != null && !bluetoothAdapter.isEnabled) {
+            Log.d("BLEScan", "Bluetooth is not enabled")
             val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-            startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT)
+            enableBluetoothLauncher.launch(enableBtIntent)
             return
         }
+
         val locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            Log.d("BLEScan", "Location services are not enabled")
             // Prompt user to enable location services
             return
         }
+
         val scanner = bluetoothAdapter.bluetoothLeScanner
         if (scanner == null) {
             Log.e("BLEScan", "BluetoothLeScanner is null")
             return
         }
+
         stopBleScan() // Stop any ongoing scan before starting a new one
+
         val scanFilter = ScanFilter.Builder().build()
         val scanSettings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
+
+        Log.d("BLEScan", "Starting scan")
         scanner.startScan(listOf(scanFilter), scanSettings, scanCallback)
     }
+
 
     private fun stopBleScan() {
         logMethodCall("stopBleScan")
@@ -369,7 +435,7 @@ class MainActivity : AppCompatActivity() {
                 initiatePairing(device)
             } catch (e: SecurityException) {
                 runOnUiThread {
-                    responseLabel.text = getString(R.string.ble_operation_failed, e.message)
+                    logMethodCall(getString(R.string.ble_operation_failed, e.message))
                 }
             }
         }
@@ -380,18 +446,49 @@ class MainActivity : AppCompatActivity() {
         logMethodCall("initiatePairing")
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
             Log.d("BLEPairing", "Initiating pairing with device: ${device.address}")
-            device.createBond()
+
+            // Set pairing confirmation
+            try {
+                Log.d("BLEPairing", "Initiating pairing with device: ${device.address}")
+
+                // Set pairing confirmation to true before setting PIN
+
+
+                // Convert PIN to bytes and attempt to set it
+                val pinBytes = PASSKEY.toByteArray(Charset.defaultCharset())
+
+                device.setPin(pinBytes)
+                device.setPairingConfirmation(true)
+                //abortBroadcast()
+                if (!device.setPin(pinBytes)) {
+                    Log.e("BLEPairing", "Failed to set PIN")
+                    return
+                }else if (!device.createBond()) {
+                    Log.e("BLEPairing", "Failed to initiate bonding")
+                    return
+                }
+
+                Log.d("BLEPairing", "Pairing initiated successfully")
+
+            } catch (e: SecurityException) {
+                Log.e("BLEPairing", "Security exception during pairing: ${e.message}")
+            }
+
+
         } else {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 1)
         }
     }
 
+    @SuppressLint("NewApi")
     private fun sendCommand(command: String) {
         logMethodCall("sendCommand")
         writeCharacteristic?.let { characteristic ->
             characteristic.value = command.toByteArray()
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                bluetoothGatt?.writeCharacteristic(characteristic)
+                bluetoothGatt?.let { gatt ->
+                    gatt.writeCharacteristic(characteristic, command.toByteArray(), characteristic.writeType)
+                }
             }
         }
     }
@@ -406,6 +503,7 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacks(reconnectRunnable) // Stop the reconnect task
     }
 
+    // Method to handle BLE operations with permission check
     private fun performBleOperation(operation: () -> Unit) {
         logMethodCall("performBleOperation")
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
@@ -413,12 +511,14 @@ class MainActivity : AppCompatActivity() {
                 operation()
             } catch (e: SecurityException) {
                 runOnUiThread {
-                    responseLabel.text = getString(R.string.ble_operation_failed, e.message)
+                    //responseLabel.text = getString(R.string.ble_operation_failed, e.message)
+                    logMethodCall(getString(R.string.ble_operation_failed, e.message))
                 }
             }
         }
     }
 
+    // Method to start periodic RSSI updates
     private fun startRssiUpdates(gatt: BluetoothGatt) {
         handler.post(object : Runnable {
             @SuppressLint("MissingPermission")
@@ -435,14 +535,16 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacksAndMessages(null)
     }
 
+    // Method to handle RSSI value
     private fun handleRssiValue(rssi: Int) {
-        if (rssi in -85..-30 && (lockStatus == "none" || lockStatus == "locked") && !isLockButtonPressedManually) {
+        if (rssi in -85..-30 && (lockStatus == "none" || lockStatus == "locked") && !isLockButtonPressedManually ) {
             findViewById<Button>(R.id.unlockButton).performClick()
         } else if (rssi in -90..-86 && lockStatus == "unlocked") {
             findViewById<Button>(R.id.lockButton).performClick()
         }
     }
 
+    // Method to handle characteristic changes
     private fun handleCharacteristicChanged(value: String) {
         lastCharacteristicValue = value
         when (value) {
@@ -457,12 +559,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // Method to log method calls for debugging
     private fun logMethodCall(methodName: String) {
-        logTextView.setText("$methodName called\n")
         Log.d("MethodCall", "$methodName called")
     }
 
-companion object {
-    private const val REQUEST_ENABLE_BT = 1
-}
+    companion object {
+        private const val REQUEST_ENABLE_BT = 1
+        private const val SCAN_PERIOD = 10000L // 10 seconds scan period
+        private const val SCAN_INTERVAL = 30000L // 30 seconds between scans
+        private var isScanning = false
+    }
 }
