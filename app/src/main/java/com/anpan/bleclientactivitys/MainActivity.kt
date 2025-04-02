@@ -18,6 +18,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.icu.util.Calendar
 import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
@@ -76,18 +77,15 @@ class MainActivity : AppCompatActivity() {
             if (intent.action == BluetoothDevice.ACTION_BOND_STATE_CHANGED) {
                 val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableExtra(
-                        BluetoothDevice.EXTRA_DEVICE,
-                        BluetoothDevice::class.java
+                        BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java
                     )
                 } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                    @Suppress("DEPRECATION") intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
                 }
                 val bondState =
                     intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
                 val prevBondState = intent.getIntExtra(
-                    BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE,
-                    BluetoothDevice.ERROR
+                    BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR
                 )
 
                 Log.d(
@@ -146,18 +144,15 @@ class MainActivity : AppCompatActivity() {
             if (intent.action == BluetoothDevice.ACTION_PAIRING_REQUEST) {
                 val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableExtra(
-                        BluetoothDevice.EXTRA_DEVICE,
-                        BluetoothDevice::class.java
+                        BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java
                     )
                 } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                    @Suppress("DEPRECATION") intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
                 }
 
                 device?.let {
                     val variant = intent.getIntExtra(
-                        BluetoothDevice.EXTRA_PAIRING_VARIANT,
-                        BluetoothDevice.ERROR
+                        BluetoothDevice.EXTRA_PAIRING_VARIANT, BluetoothDevice.ERROR
                     )
                     Log.d("BLEPairing", "Pairing variant: $variant")
 
@@ -241,6 +236,9 @@ class MainActivity : AppCompatActivity() {
                         logMethodCall(getString(R.string.connected))
                         connectionStatusLabel.text = getString(R.string.connected)
                         connectionStatusLabel.setTextColor(getColor(R.color.green))
+                        lockButton.isEnabled = true
+                        unlockButton.isEnabled = true
+                        findViewById<Button>(R.id.trunkButton).isEnabled = true
                         locateMeButton.isEnabled = true
                     }
                     Log.d("BLEConnection", "Connected to device: ${gatt.device.address}")
@@ -274,13 +272,23 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread {
                         connectionStatusLabel.text = getString(R.string.disconnected)
                         connectionStatusLabel.setTextColor(getColor(R.color.red))
-                        startBleScan()
+                        lockButton.isEnabled = false
+                        unlockButton.isEnabled = false
+                        findViewById<Button>(R.id.trunkButton).isEnabled = false
                         locateMeButton.isEnabled = false
+                        startBleScan()
                     }
                     handler.post(reconnectRunnable)
                     stopRssiUpdates()
                     lockStatus = "none"
                     isLockButtonPressedManually = false
+
+                    // Attempt to reconnect
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        Log.d("BLEConnection", "Attempting to reconnect")
+                        gatt.close()
+                        connectToDevice(gatt.device)
+                    }
                 }
             }
         }
@@ -307,8 +315,7 @@ class MainActivity : AppCompatActivity() {
                 notifyCharacteristic = service.getCharacteristic(CHAR_NOTIFY_UUID)
                 performBleOperation {
                     gatt.setCharacteristicNotification(
-                        notifyCharacteristic,
-                        true
+                        notifyCharacteristic, true
                     )
                 }
 
@@ -323,15 +330,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onCharacteristicChanged(
-            gatt: BluetoothGatt,
-            characteristic: BluetoothGattCharacteristic
+            gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic
         ) {
             logMethodCall("onCharacteristicChanged")
-            val value = characteristic.getValue()?.toString(Charset.defaultCharset())
+            val value = characteristic.value?.toString(Charset.defaultCharset())
             runOnUiThread {
                 if (value != null) {
                     responseLabel.text = value
-                    logMethodCall(value)
                     handleCharacteristicChanged(value)
                 }
             }
@@ -352,6 +357,7 @@ class MainActivity : AppCompatActivity() {
         lockButton = findViewById(R.id.lockButton)
         unlockButton = findViewById(R.id.unlockButton)
         locateMeButton = findViewById(R.id.locateMeButton)
+        findViewById<Button>(R.id.trunkButton).isEnabled = false
         lockButton.isEnabled = false
         unlockButton.isEnabled = false
         locateMeButton.isEnabled = false
@@ -368,12 +374,10 @@ class MainActivity : AppCompatActivity() {
 
         registerReceiver(bondStateReceiver, IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED))
         registerReceiver(
-            bluetoothStateReceiver,
-            IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+            bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
         )
         registerReceiver(
-            pairingRequestReceiver,
-            IntentFilter(BluetoothDevice.ACTION_PAIRING_REQUEST)
+            pairingRequestReceiver, IntentFilter(BluetoothDevice.ACTION_PAIRING_REQUEST)
         )
         startBleScan()
         handler.post(reconnectRunnable)
@@ -388,6 +392,7 @@ class MainActivity : AppCompatActivity() {
             isLockButtonPressedManually = true
             lockButton.isEnabled = false
             unlockButton.isEnabled = true
+            sendAdditionalCommandIfNeeded()
         }
         unlockButton.setOnClickListener {
             logMethodCall("unlockButton onClick")
@@ -396,6 +401,7 @@ class MainActivity : AppCompatActivity() {
             isLockButtonPressedManually = false
             lockButton.isEnabled = true
             unlockButton.isEnabled = false
+            sendAdditionalCommandIfNeeded()
         }
         findViewById<Button>(R.id.trunkButton).setOnClickListener {
             logMethodCall("trunkButton onClick")
@@ -406,7 +412,15 @@ class MainActivity : AppCompatActivity() {
             writeToCharacteristic(CHAR_WRITE_UUID, "LOCATE")
         }
     }
-
+    private fun sendAdditionalCommandIfNeeded() {
+        val currentTime = Calendar.getInstance()
+        val hour = currentTime.get(Calendar.HOUR_OF_DAY)
+        if (hour >= 17) { // 5 PM is 17:00 in 24-hour format
+            handler.postDelayed({
+                writeToCharacteristic(CHAR_WRITE_UUID, "ELIGHT")
+            }, 3000) // 3000 milliseconds = 3 seconds
+        }
+    }
     @SuppressLint("MissingPermission", "NewApi")
     private fun writeToCharacteristic(uuid: UUID, command: String) {
         logMethodCall("writeToCharacteristic")
@@ -423,9 +437,7 @@ class MainActivity : AppCompatActivity() {
             if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
                 handler.post {
                     val result = gatt.writeCharacteristic(
-                        characteristic,
-                        characteristic.value,
-                        characteristic.writeType
+                        characteristic, characteristic.value, characteristic.writeType
                     )
                     if (result == BluetoothGatt.GATT_SUCCESS) {
                         Log.d("BLEWrite", "Characteristic written successfully")
@@ -485,13 +497,10 @@ class MainActivity : AppCompatActivity() {
 
         stopBleScan()
 
-        val scanFilter = ScanFilter.Builder()
-            .setDeviceAddress(ESP32_MAC_ADDRESS)
-            .build()
+        val scanFilter = ScanFilter.Builder().setDeviceAddress(ESP32_MAC_ADDRESS).build()
 
-        val scanSettings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-            .build()
+        val scanSettings =
+            ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
 
         Log.d("BLEScan", "Starting scan")
         scanner.startScan(listOf(scanFilter), scanSettings, scanCallback)
