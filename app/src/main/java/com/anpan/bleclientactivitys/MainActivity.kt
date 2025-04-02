@@ -18,7 +18,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.icu.util.Calendar
 import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
@@ -51,11 +50,13 @@ class MainActivity : AppCompatActivity() {
         override fun run() {
             logMethodCall("reconnectRunnable")
             if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                if (bluetoothGatt == null || bluetoothGatt?.device?.bondState != BluetoothDevice.BOND_BONDED) {
+                if (isDeviceNotConnected()) {
                     startBleScan()
                 }
             }
-            handler.postDelayed(this, 5000)
+            if (isDeviceNotConnected()) {
+                handler.postDelayed(this, 5000)
+            }
         }
     }
     private val rssiUpdateInterval = 2000L
@@ -336,7 +337,7 @@ class MainActivity : AppCompatActivity() {
             val value = characteristic.value?.toString(Charset.defaultCharset())
             runOnUiThread {
                 if (value != null) {
-                    responseLabel.text = value
+                    responseLabel.text = "$value"
                     handleCharacteristicChanged(value)
                 }
             }
@@ -392,7 +393,7 @@ class MainActivity : AppCompatActivity() {
             isLockButtonPressedManually = true
             lockButton.isEnabled = false
             unlockButton.isEnabled = true
-            sendAdditionalCommandIfNeeded()
+
         }
         unlockButton.setOnClickListener {
             logMethodCall("unlockButton onClick")
@@ -401,7 +402,7 @@ class MainActivity : AppCompatActivity() {
             isLockButtonPressedManually = false
             lockButton.isEnabled = true
             unlockButton.isEnabled = false
-            sendAdditionalCommandIfNeeded()
+
         }
         findViewById<Button>(R.id.trunkButton).setOnClickListener {
             logMethodCall("trunkButton onClick")
@@ -412,15 +413,13 @@ class MainActivity : AppCompatActivity() {
             writeToCharacteristic(CHAR_WRITE_UUID, "LOCATE")
         }
     }
-    private fun sendAdditionalCommandIfNeeded() {
-        val currentTime = Calendar.getInstance()
-        val hour = currentTime.get(Calendar.HOUR_OF_DAY)
-        if (hour >= 17) { // 5 PM is 17:00 in 24-hour format
-            handler.postDelayed({
-                writeToCharacteristic(CHAR_WRITE_UUID, "ELIGHT")
-            }, 3000) // 3000 milliseconds = 3 seconds
-        }
+
+
+    @SuppressLint("MissingPermission")
+    private fun isDeviceNotConnected(): Boolean {
+        return bluetoothGatt == null || bluetoothGatt?.device?.bondState != BluetoothDevice.BOND_BONDED
     }
+
     @SuppressLint("MissingPermission", "NewApi")
     private fun writeToCharacteristic(uuid: UUID, command: String) {
         logMethodCall("writeToCharacteristic")
