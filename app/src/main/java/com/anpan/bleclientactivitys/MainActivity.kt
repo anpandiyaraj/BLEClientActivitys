@@ -398,6 +398,8 @@ class MainActivity : AppCompatActivity() {
             isLockButtonPressedManually = true
             lockButton.isEnabled = false
             isLockButtonEnabled = lockButton.isEnabled
+            locateMeButton.isEnabled = false
+            trunkButton.isEnabled = false
         }
         unlockButton.setOnClickListener {
             logMethodCall("unlockButton onClick")
@@ -405,6 +407,8 @@ class MainActivity : AppCompatActivity() {
             lockStatus = "unlocked"
             isLockButtonPressedManually = false
             unlockButton.isEnabled = false
+            locateMeButton.isEnabled = false
+            trunkButton.isEnabled = false
 
         }
         trunkButton.setOnClickListener {
@@ -618,11 +622,15 @@ class MainActivity : AppCompatActivity() {
             "Door Unlocked" -> {
                 lockButton.isEnabled = true
                 unlockButton.isEnabled = false
+                trunkButton.isEnabled = true
+                locateMeButton.isEnabled = true
             }
 
             "Door Locked" -> {
                 lockButton.isEnabled = false
                 unlockButton.isEnabled = true
+                trunkButton.isEnabled = true
+                locateMeButton.isEnabled = true
             }
 
             "Located" -> {
@@ -644,6 +652,7 @@ class MainActivity : AppCompatActivity() {
                     unlockButton.isEnabled = true
                 }
             }
+
             else -> {
                 trunkButton.isEnabled = true
                 locateMeButton.isEnabled = true
