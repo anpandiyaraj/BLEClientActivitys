@@ -644,6 +644,15 @@ class MainActivity : AppCompatActivity() {
                     unlockButton.isEnabled = true
                 }
             }
+            else -> {
+                trunkButton.isEnabled = true
+                locateMeButton.isEnabled = true
+                if (isLockButtonEnabled) {
+                    lockButton.isEnabled = true
+                } else {
+                    unlockButton.isEnabled = true
+                }
+            }
         }
     }
 
