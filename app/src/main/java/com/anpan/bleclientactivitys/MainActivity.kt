@@ -23,6 +23,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.SpannableString
 import android.util.Log
 import android.view.View
 import android.widget.Button
@@ -45,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var lockButton: Button
     private lateinit var unlockButton: Button
     private lateinit var locateMeButton: Button
+    private lateinit var trunkButton: Button
     private val handler = Handler(Looper.getMainLooper())
     private val reconnectRunnable = object : Runnable {
         override fun run() {
@@ -63,6 +65,7 @@ class MainActivity : AppCompatActivity() {
     private var lockStatus = "none"
     private var isLockButtonPressedManually = false
     private var lastCharacteristicValue: String? = null
+    private var isLockButtonEnabled: Boolean = true
 
     private val SERVICE_UUID = UUID.fromString("a1c658ed-1df2-4c5c-8477-708f714f01f7")
     private val CHAR_WRITE_UUID = UUID.fromString("f16c9c3c-fbcc-4a8c-b130-0e79948b8f82")
@@ -122,7 +125,7 @@ class MainActivity : AppCompatActivity() {
                             lockButton.isEnabled = true
                             unlockButton.isEnabled = false
                         }
-                        findViewById<Button>(R.id.trunkButton).isEnabled = true
+                        trunkButton.isEnabled = true
                         locateMeButton.isEnabled = true
                     }
 
@@ -130,7 +133,7 @@ class MainActivity : AppCompatActivity() {
                         stopBleScan()
                         lockButton.isEnabled = false
                         unlockButton.isEnabled = false
-                        findViewById<Button>(R.id.trunkButton).isEnabled = false
+                        trunkButton.isEnabled = false
                         connectionStatusLabel.text = getString(R.string.disconnected)
                         connectionStatusLabel.setTextColor(getColor(R.color.red))
                         locateMeButton.isEnabled = false
@@ -235,11 +238,12 @@ class MainActivity : AppCompatActivity() {
                 BluetoothProfile.STATE_CONNECTED -> {
                     runOnUiThread {
                         logMethodCall(getString(R.string.connected))
-                        connectionStatusLabel.text = getString(R.string.connected)
+                        connectionStatusLabel.text =
+                            SpannableString(getString(R.string.connected) + " \uD83D\uDE97")
                         connectionStatusLabel.setTextColor(getColor(R.color.green))
                         lockButton.isEnabled = true
                         unlockButton.isEnabled = true
-                        findViewById<Button>(R.id.trunkButton).isEnabled = true
+                        trunkButton.isEnabled = true
                         locateMeButton.isEnabled = true
                     }
                     Log.d("BLEConnection", "Connected to device: ${gatt.device.address}")
@@ -275,7 +279,7 @@ class MainActivity : AppCompatActivity() {
                         connectionStatusLabel.setTextColor(getColor(R.color.red))
                         lockButton.isEnabled = false
                         unlockButton.isEnabled = false
-                        findViewById<Button>(R.id.trunkButton).isEnabled = false
+                        trunkButton.isEnabled = false
                         locateMeButton.isEnabled = false
                         startBleScan()
                     }
@@ -337,7 +341,7 @@ class MainActivity : AppCompatActivity() {
             val value = characteristic.value?.toString(Charset.defaultCharset())
             runOnUiThread {
                 if (value != null) {
-                    responseLabel.text = "$value"
+                    responseLabel.text = SpannableString("$value \n\uD83D\uDE97")
                     handleCharacteristicChanged(value)
                 }
             }
@@ -358,7 +362,8 @@ class MainActivity : AppCompatActivity() {
         lockButton = findViewById(R.id.lockButton)
         unlockButton = findViewById(R.id.unlockButton)
         locateMeButton = findViewById(R.id.locateMeButton)
-        findViewById<Button>(R.id.trunkButton).isEnabled = false
+        trunkButton = findViewById(R.id.trunkButton)
+        trunkButton.isEnabled = false
         lockButton.isEnabled = false
         unlockButton.isEnabled = false
         locateMeButton.isEnabled = false
@@ -392,25 +397,36 @@ class MainActivity : AppCompatActivity() {
             lockStatus = "locked"
             isLockButtonPressedManually = true
             lockButton.isEnabled = false
-            unlockButton.isEnabled = true
-
+            isLockButtonEnabled = lockButton.isEnabled
         }
         unlockButton.setOnClickListener {
             logMethodCall("unlockButton onClick")
             writeToCharacteristic(CHAR_WRITE_UUID, "UNLOCK")
             lockStatus = "unlocked"
             isLockButtonPressedManually = false
-            lockButton.isEnabled = true
             unlockButton.isEnabled = false
 
         }
-        findViewById<Button>(R.id.trunkButton).setOnClickListener {
+        trunkButton.setOnClickListener {
+            isLockButtonEnabled = lockButton.isEnabled
             logMethodCall("trunkButton onClick")
+            responseLabel.text = SpannableString("Opening Trunk \n\uD83D\uDE97")
             writeToCharacteristic(CHAR_WRITE_UUID, "TRUNK")
+            trunkButton.isEnabled = false
+            lockButton.isEnabled = false
+            unlockButton.isEnabled = false
+            locateMeButton.isEnabled = false
+
         }
         locateMeButton.setOnClickListener {
+            isLockButtonEnabled = lockButton.isEnabled
             logMethodCall("locateMeButton onClick")
+            responseLabel.text = SpannableString("Locating...\n\uD83D\uDE97")
             writeToCharacteristic(CHAR_WRITE_UUID, "LOCATE")
+            locateMeButton.isEnabled = false
+            lockButton.isEnabled = false
+            unlockButton.isEnabled = false
+            trunkButton.isEnabled = false
         }
     }
 
@@ -599,14 +615,34 @@ class MainActivity : AppCompatActivity() {
     private fun handleCharacteristicChanged(value: String) {
         lastCharacteristicValue = value
         when (value) {
-            "Unlocked" -> {
+            "Door Unlocked" -> {
                 lockButton.isEnabled = true
                 unlockButton.isEnabled = false
             }
 
-            "Locked" -> {
+            "Door Locked" -> {
                 lockButton.isEnabled = false
                 unlockButton.isEnabled = true
+            }
+
+            "Located" -> {
+                locateMeButton.isEnabled = true
+                trunkButton.isEnabled = true
+                if (isLockButtonEnabled) {
+                    lockButton.isEnabled = true
+                } else {
+                    unlockButton.isEnabled = true
+                }
+            }
+
+            "Trunk Released" -> {
+                trunkButton.isEnabled = true
+                locateMeButton.isEnabled = true
+                if (isLockButtonEnabled) {
+                    lockButton.isEnabled = true
+                } else {
+                    unlockButton.isEnabled = true
+                }
             }
         }
     }
