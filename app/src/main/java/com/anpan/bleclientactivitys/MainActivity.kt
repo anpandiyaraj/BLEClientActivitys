@@ -19,6 +19,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.media.MediaPlayer
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -35,6 +36,8 @@ import java.nio.charset.Charset
 import java.util.UUID
 
 class MainActivity : AppCompatActivity() {
+    private var mediaLock: MediaPlayer? = null
+    private var mediaConnect: MediaPlayer? = null
     private lateinit var bluetoothManager: BluetoothManager
     private lateinit var bluetoothAdapter: BluetoothAdapter
     private var bluetoothGatt: BluetoothGatt? = null
@@ -241,6 +244,11 @@ class MainActivity : AppCompatActivity() {
                         connectionStatusLabel.text =
                             SpannableString(getString(R.string.connected) + " \uD83D\uDE97")
                         connectionStatusLabel.setTextColor(getColor(R.color.green))
+                        mediaConnect?.start()
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            mediaConnect?.pause()
+                            mediaConnect?.seekTo(0) // Reset to the beginning
+                        }, 3000)
                         lockButton.isEnabled = true
                         unlockButton.isEnabled = true
                         trunkButton.isEnabled = true
@@ -368,7 +376,10 @@ class MainActivity : AppCompatActivity() {
         unlockButton.isEnabled = false
         locateMeButton.isEnabled = false
         setupButtons()
+        // Initialize MediaPlayer for each audio file
 
+        mediaLock = MediaPlayer.create(this, R.raw.carlocksound)
+        mediaConnect = MediaPlayer.create(this, R.raw.carstartsound)
         enableBluetoothLauncher =
             registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
                 if (result.resultCode == RESULT_OK) {
@@ -395,6 +406,11 @@ class MainActivity : AppCompatActivity() {
             logMethodCall("lockButton onClick")
             writeToCharacteristic(CHAR_WRITE_UUID, "LOCK")
             lockStatus = "locked"
+            mediaLock?.start()
+            Handler(Looper.getMainLooper()).postDelayed({
+                mediaLock?.pause()
+                mediaLock?.seekTo(0) // Reset to the beginning
+            }, 335)
             isLockButtonPressedManually = true
             lockButton.isEnabled = false
             isLockButtonEnabled = lockButton.isEnabled
@@ -405,6 +421,7 @@ class MainActivity : AppCompatActivity() {
             logMethodCall("unlockButton onClick")
             writeToCharacteristic(CHAR_WRITE_UUID, "UNLOCK")
             lockStatus = "unlocked"
+            mediaLock?.start()
             isLockButtonPressedManually = false
             unlockButton.isEnabled = false
             locateMeButton.isEnabled = false
@@ -501,7 +518,11 @@ class MainActivity : AppCompatActivity() {
             enableBluetoothLauncher.launch(enableBtIntent)
             return
         }
-
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            Log.d("BLEScan", "Location permission not granted")
+            requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 1)
+            return
+        }
         val locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
         if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
             Log.d("BLEScan", "Location services are not enabled")
@@ -577,6 +598,8 @@ class MainActivity : AppCompatActivity() {
         unregisterReceiver(bluetoothStateReceiver)
         unregisterReceiver(pairingRequestReceiver)
         handler.removeCallbacks(reconnectRunnable)
+        mediaLock?.release()
+        mediaConnect?.release()
     }
 
     private fun performBleOperation(operation: () -> Unit) {
