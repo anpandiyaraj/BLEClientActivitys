@@ -67,7 +67,7 @@ class MainActivity : AppCompatActivity() {
     private val SERVICE_UUID = UUID.fromString("a1c658ed-1df2-4c5c-8477-708f714f01f7")
     private val CHAR_WRITE_UUID = UUID.fromString("f16c9c3c-fbcc-4a8c-b130-0e79948b8f82")
     private val CHAR_NOTIFY_UUID = UUID.fromString("7dc6ca3d-f066-4bda-a742-4deb534b58d5")
-    private val ESP32_MAC_ADDRESS = "XX:01:XX:XX:XX:XX"
+    private val ESP32_MAC_ADDRESS = "5C:01:3B:96:DD:56"
     private val PASSKEY = "123456"
 
     private lateinit var enableBluetoothLauncher: ActivityResultLauncher<Intent>
