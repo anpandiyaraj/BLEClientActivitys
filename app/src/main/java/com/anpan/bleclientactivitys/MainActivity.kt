@@ -42,7 +42,6 @@ class MainActivity : AppCompatActivity() {
     private val CHAR_NOTIFY_UUID = UUID.fromString("c1cf0c5d-d07f-4f7c-ad2e-9cb3e49286b2")
     private val CHAR_WRITE_UUID = UUID.fromString("b12523bb-5e18-41fa-a498-cceb16bb7626")
     private val ESP32_MAC_ADDRESS = "5C:01:3B:95:90:AA"
-    private val PASSKEY = "151784"
 
     // UI Components
     private lateinit var connectionStatusLabel: TextView
@@ -68,7 +67,7 @@ class MainActivity : AppCompatActivity() {
     private var currentLockStatus = "none" // "none", "locked", "unlocked"
     private var isManualLock = false
     private var isLockButtonEnabled = true
-    private var proximityConfirmedCount = 0
+    //private var proximityConfirmedCount = 0
     private var isPairingInProgress = false
 
     // RSSI Processing
@@ -256,6 +255,11 @@ class MainActivity : AppCompatActivity() {
                         connectionStatusLabel.text = "Bluetooth Off"
                         connectionStatusLabel.setTextColor(Color.RED)
                     }
+                    // Disable the buttons
+                    lockButton.isEnabled = false
+                    unlockButton.isEnabled = false
+                    trunkButton.isEnabled = false
+                    locateMeButton.isEnabled = false
                     isManualLock = false
                     stopBleOperations()
                 }
@@ -565,7 +569,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun shouldAutoLock(rssi: Int): Boolean {
         if (rssi < LOCK_THRESHOLD) {
-            proximityConfirmedCount = 0
+            //proximityConfirmedCount = 0
             return (currentLockStatus == "unlocked")
         }
         return false
@@ -708,10 +712,6 @@ class MainActivity : AppCompatActivity() {
 
         isPairingInProgress = true
         try {
-            // Set the PIN for pairing
-            val setPinMethod = device.javaClass.getMethod("setPin", ByteArray::class.java)
-            setPinMethod.invoke(device, PASSKEY.toByteArray())
-
             // Initiate pairing
             val createBondMethod = device.javaClass.getMethod("createBond")
             val result = createBondMethod.invoke(device) as Boolean
