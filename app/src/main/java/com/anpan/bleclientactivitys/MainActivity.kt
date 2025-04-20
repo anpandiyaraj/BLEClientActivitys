@@ -99,7 +99,7 @@ class MainActivity : AppCompatActivity() {
     )
 
     companion object {
-        private const val RSSI_HISTORY_SIZE = 5
+        private const val RSSI_HISTORY_SIZE = 3 // results to keep for smoothing
         private const val RSSI_UPDATE_INTERVAL = 1000L
         private const val RSSI_CONFIRMATION_DELAY = 2000L
         private const val CONNECTION_TIMEOUT = 10000L
