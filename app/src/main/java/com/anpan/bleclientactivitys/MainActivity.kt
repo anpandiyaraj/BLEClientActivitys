@@ -2,20 +2,35 @@ package com.anpan.bleclientactivitys
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.bluetooth.*
-import android.bluetooth.le.*
-import android.content.*
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.media.MediaPlayer
-import android.os.*
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.SpannableString
 import android.util.Log
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
-import java.util.*
+import java.util.UUID
 import java.util.concurrent.LinkedBlockingQueue
 
 class MainActivity : AppCompatActivity() {
@@ -57,10 +72,7 @@ class MainActivity : AppCompatActivity() {
     private var lastRssiTriggerTime = 0L
     private var lastRssiValue = 0
 
-    // Thresholds
-    private val UNLOCK_THRESHOLD = -72
     private val LOCK_THRESHOLD = -93
-    private val PROXIMITY_CONFIRMATIONS_NEEDED = 3
 
     // Threading
     private val handler = Handler(Looper.getMainLooper())
@@ -97,6 +109,7 @@ class MainActivity : AppCompatActivity() {
                         trunkButton.isEnabled = true
                         locateMeButton.isEnabled = true
                     }
+
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         connectionStatusLabel.text = "Disconnected"
                         connectionStatusLabel.setTextColor(Color.RED)
@@ -119,6 +132,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     startRssiUpdates(gatt)
                 }
+
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.d("BLE", "Disconnected")
                     isManualLock = false
@@ -137,8 +151,7 @@ class MainActivity : AppCompatActivity() {
 
                 bleOperationQueue.add {
                     if (ActivityCompat.checkSelfPermission(
-                            this@MainActivity,
-                            Manifest.permission.BLUETOOTH_CONNECT
+                            this@MainActivity, Manifest.permission.BLUETOOTH_CONNECT
                         ) == PackageManager.PERMISSION_GRANTED
                     ) {
                         gatt.setCharacteristicNotification(notifyCharacteristic, true)
@@ -149,7 +162,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic
+        ) {
             val value = characteristic.getStringValue(0)
             Log.d("BLE", "Characteristic changed: $value")
             runOnUiThread {
@@ -203,6 +218,7 @@ class MainActivity : AppCompatActivity() {
                     isManualLock = false
                     stopBleOperations()
                 }
+
                 BluetoothAdapter.STATE_ON -> startBleScan()
             }
         }
@@ -213,7 +229,9 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == BluetoothDevice.ACTION_BOND_STATE_CHANGED) {
                 val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                    intent.getParcelableExtra(
+                        BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java
+                    )
                 } else {
                     intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
                 }
@@ -227,10 +245,12 @@ class MainActivity : AppCompatActivity() {
                                 connectToDevice(device)
                             }
                         }
+
                         BluetoothDevice.BOND_BONDING -> {
                             isPairingInProgress = true
                             Log.d("BLE", "Device bonding in progress")
                         }
+
                         BluetoothDevice.BOND_NONE -> {
                             isPairingInProgress = false
                             Log.d("BLE", "Device unpaired")
@@ -267,7 +287,9 @@ class MainActivity : AppCompatActivity() {
         mediaConnect = MediaPlayer.create(this, R.raw.carstartsound)
 
         // Register receivers
-        registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+        registerReceiver(
+            bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+        )
         registerReceiver(bondStateReceiver, IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED))
 
         // Setup Bluetooth
@@ -344,29 +366,26 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.BLUETOOTH_SCAN
+                this, Manifest.permission.BLUETOOTH_SCAN
             ) != PackageManager.PERMISSION_GRANTED
         ) {
             ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.BLUETOOTH_SCAN),
-                1
+                this, arrayOf(Manifest.permission.BLUETOOTH_SCAN), 1
             )
             return
         }
 
         val scanner = bluetoothAdapter.bluetoothLeScanner ?: return
         val filter = ScanFilter.Builder().setDeviceAddress(ESP32_MAC_ADDRESS).build()
-        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+        val settings =
+            ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
         scanner.startScan(listOf(filter), settings, scanCallback)
     }
 
     @SuppressLint("MissingPermission")
     private fun stopBleScan() {
         if (ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.BLUETOOTH_SCAN
+                this, Manifest.permission.BLUETOOTH_SCAN
             ) == PackageManager.PERMISSION_GRANTED
         ) {
             bluetoothAdapter.bluetoothLeScanner?.stopScan(scanCallback)
@@ -400,8 +419,7 @@ class MainActivity : AppCompatActivity() {
     private fun scheduleReconnect() {
         handler.postDelayed({
             if (ActivityCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.BLUETOOTH_CONNECT
+                    this, Manifest.permission.BLUETOOTH_CONNECT
                 ) == PackageManager.PERMISSION_GRANTED
             ) {
                 if (bluetoothGatt?.device?.bondState == BluetoothDevice.BOND_BONDED) {
@@ -421,8 +439,7 @@ class MainActivity : AppCompatActivity() {
             override fun run() {
                 bleOperationQueue.add {
                     if (ActivityCompat.checkSelfPermission(
-                            this@MainActivity,
-                            Manifest.permission.BLUETOOTH_CONNECT
+                            this@MainActivity, Manifest.permission.BLUETOOTH_CONNECT
                         ) == PackageManager.PERMISSION_GRANTED
                     ) {
                         gatt.readRemoteRssi()
@@ -460,9 +477,9 @@ class MainActivity : AppCompatActivity() {
     private fun shouldAutoUnlock(rssi: Int): Boolean {
         if (isManualLock) return false
 
-        if (rssi > LOCK_THRESHOLD ) {
-           return true
-                   }
+        if (rssi > LOCK_THRESHOLD) {
+            return true
+        }
         return false
     }
 
@@ -494,6 +511,7 @@ class MainActivity : AppCompatActivity() {
                 lastRssiTriggerTime = currentTime
                 playLockSound()
             }
+
             rssi < LOCK_THRESHOLD && currentLockStatus == "unlocked" -> {
                 sendCommand("LOCK")
                 runOnUiThread {
@@ -516,6 +534,7 @@ class MainActivity : AppCompatActivity() {
                 currentLockStatus = "unlocked"
                 isManualLock = false
             }
+
             value.contains("Locked", ignoreCase = true) -> {
                 currentLockStatus = "locked"
             }
@@ -530,12 +549,14 @@ class MainActivity : AppCompatActivity() {
                 trunkButton.isEnabled = true
                 locateMeButton.isEnabled = true
             }
+
             value.contains("Locked", ignoreCase = true) -> {
                 lockButton.isEnabled = false
                 unlockButton.isEnabled = true
                 trunkButton.isEnabled = true
                 locateMeButton.isEnabled = true
             }
+
             value.contains("Located", ignoreCase = true) -> {
                 locateMeButton.isEnabled = true
                 trunkButton.isEnabled = true
@@ -545,6 +566,7 @@ class MainActivity : AppCompatActivity() {
                     unlockButton.isEnabled = true
                 }
             }
+
             value.contains("Trunk", ignoreCase = true) -> {
                 trunkButton.isEnabled = true
                 locateMeButton.isEnabled = true
@@ -554,6 +576,7 @@ class MainActivity : AppCompatActivity() {
                     unlockButton.isEnabled = true
                 }
             }
+
             else -> {
                 trunkButton.isEnabled = true
                 locateMeButton.isEnabled = true
@@ -571,8 +594,7 @@ class MainActivity : AppCompatActivity() {
         bleOperationQueue.add {
             writeCharacteristic?.value = command.toByteArray()
             if (ActivityCompat.checkSelfPermission(
-                    this@MainActivity,
-                    Manifest.permission.BLUETOOTH_CONNECT
+                    this@MainActivity, Manifest.permission.BLUETOOTH_CONNECT
                 ) == PackageManager.PERMISSION_GRANTED
             ) {
                 bluetoothGatt?.writeCharacteristic(writeCharacteristic)
@@ -624,8 +646,7 @@ class MainActivity : AppCompatActivity() {
                 try {
                     val operation = bleOperationQueue.take()
                     if (ActivityCompat.checkSelfPermission(
-                            this@MainActivity,
-                            Manifest.permission.BLUETOOTH_CONNECT
+                            this@MainActivity, Manifest.permission.BLUETOOTH_CONNECT
                         ) == PackageManager.PERMISSION_GRANTED
                     ) {
                         operation()
