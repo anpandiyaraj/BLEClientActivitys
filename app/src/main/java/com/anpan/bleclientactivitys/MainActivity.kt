@@ -21,11 +21,11 @@ import java.util.concurrent.LinkedBlockingQueue
 class MainActivity : AppCompatActivity() {
 
     // BLE Configuration
-    private val SERVICE_UUID = UUID.fromString("726f72c1-055d-4f94-b090-c1afeec24780")
-    private val CHAR_NOTIFY_UUID = UUID.fromString("c1cf0c5d-d07f-4f7c-ad2e-9cb3e49286b2")
-    private val CHAR_WRITE_UUID = UUID.fromString("b12523bb-5e18-41fa-a498-cceb16bb7626")
-    private val ESP32_MAC_ADDRESS = "5C:01:3B:95:90:AA"
-    private val PASSKEY = "151784"
+    private val SERVICE_UUID = UUID.fromString("726f72c1-055d-4f94-b090-c1afeec24782")
+    private val CHAR_NOTIFY_UUID = UUID.fromString("c1cf0c5d-d07f-4f7c-ad2e-9cb3e49286b4")
+    private val CHAR_WRITE_UUID = UUID.fromString("b12523bb-5e18-41fa-a498-cceb16bb7628")
+    private val ESP32_MAC_ADDRESS = "5C:01:3B:9B:90:DD"
+    private val PASSKEY = "123456"
 
     // UI Components
     private lateinit var connectionStatusLabel: TextView
