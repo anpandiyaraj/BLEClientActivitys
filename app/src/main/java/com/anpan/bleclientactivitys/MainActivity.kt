@@ -47,7 +47,8 @@ class MainActivity : AppCompatActivity() {
 
     // State Management
     private var currentLockStatus = "none" // "none", "locked", "unlocked"
-    private var isManualOperation = false
+    //private var isManualOperation = false
+    private var isManualLock = false // New flag for manual lock state
     private var isLockButtonEnabled = true
     private var proximityConfirmedCount = 0
 
@@ -57,8 +58,8 @@ class MainActivity : AppCompatActivity() {
     private var lastRssiValue = 0
 
     // Thresholds
-    private val UNLOCK_THRESHOLD = -65
-    private val LOCK_THRESHOLD = -80
+    private val UNLOCK_THRESHOLD = -88
+    private val LOCK_THRESHOLD = -93
     private val PROXIMITY_CONFIRMATIONS_NEEDED = 3
 
     // Threading
@@ -114,12 +115,13 @@ class MainActivity : AppCompatActivity() {
                     Log.d("BLE", "Connected to ${gatt.device?.address}")
                     bleOperationQueue.add {
                         gatt.discoverServices()
-                        gatt.readRemoteRssi() // Immediate RSSI check
+                        gatt.readRemoteRssi()
                     }
                     startRssiUpdates(gatt)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.d("BLE", "Disconnected")
+                    isManualLock = false // Reset manual lock flag on disconnection
                     stopRssiUpdates()
                     scheduleReconnect()
                 }
@@ -193,6 +195,7 @@ class MainActivity : AppCompatActivity() {
                         connectionStatusLabel.text = "Bluetooth Off"
                         connectionStatusLabel.setTextColor(Color.RED)
                     }
+                    isManualLock = false // Reset manual lock flag when Bluetooth turns off
                     stopBleOperations()
                 }
                 BluetoothAdapter.STATE_ON -> startBleScan()
@@ -283,7 +286,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupButtons() {
         lockButton.setOnClickListener {
-            isManualOperation = true
+           // isManualOperation = true
+            isManualLock = true // Set manual lock flag
             sendCommand("LOCK")
             currentLockStatus = "locked"
             playLockSound()
@@ -294,7 +298,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         unlockButton.setOnClickListener {
-            isManualOperation = true
+           // isManualOperation = true
+            isManualLock = false // Reset manual lock flag on manual unlock
             sendCommand("UNLOCK")
             currentLockStatus = "unlocked"
             playLockSound()
@@ -442,11 +447,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun shouldAutoUnlock(rssi: Int): Boolean {
+        if (isManualLock) return false // Disable auto-unlock if manually locked
+
         if (rssi > UNLOCK_THRESHOLD) {
             proximityConfirmedCount++
             if (proximityConfirmedCount >= PROXIMITY_CONFIRMATIONS_NEEDED) {
                 proximityConfirmedCount = 0
-                return (!isManualOperation &&
+                return (!isManualLock &&
                         (currentLockStatus == "none" || currentLockStatus == "locked"))
             }
         } else {
@@ -457,7 +464,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun shouldAutoLock(rssi: Int): Boolean {
         if (rssi < LOCK_THRESHOLD) {
-            return (!isManualOperation && currentLockStatus == "unlocked")
+            return (currentLockStatus == "unlocked")
         }
         return false
     }
@@ -502,11 +509,11 @@ class MainActivity : AppCompatActivity() {
         when {
             value.contains("Unlocked", ignoreCase = true) -> {
                 currentLockStatus = "unlocked"
-                isManualOperation = false
+                isManualLock = false // Reset manual lock flag on unlock
             }
             value.contains("Locked", ignoreCase = true) -> {
                 currentLockStatus = "locked"
-                isManualOperation = false
+
             }
         }
     }
