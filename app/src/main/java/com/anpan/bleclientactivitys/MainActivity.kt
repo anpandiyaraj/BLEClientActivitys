@@ -28,8 +28,10 @@ import android.text.SpannableString
 import android.util.Log
 import android.widget.Button
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import java.util.UUID
 import java.util.concurrent.LinkedBlockingQueue
 
@@ -81,12 +83,23 @@ class MainActivity : AppCompatActivity() {
     private val bleOperationQueue = LinkedBlockingQueue<() -> Unit>()
     private val connectionTimeoutHandler = Handler(Looper.getMainLooper())
 
+    // Permissions
+    private val REQUIRED_PERMISSIONS = arrayOf(
+        Manifest.permission.BLUETOOTH,
+        Manifest.permission.BLUETOOTH_ADMIN,
+        Manifest.permission.BLUETOOTH_SCAN,
+        Manifest.permission.BLUETOOTH_CONNECT,
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION
+    )
+
     companion object {
         private const val RSSI_HISTORY_SIZE = 5
         private const val RSSI_UPDATE_INTERVAL = 1000L
         private const val RSSI_CONFIRMATION_DELAY = 2000L
         private const val CONNECTION_TIMEOUT = 10000L
         private const val RECONNECT_DELAY = 5000L
+        private const val PERMISSION_REQUEST_CODE = 100
     }
 
     // BLE Callbacks
@@ -191,9 +204,15 @@ class MainActivity : AppCompatActivity() {
     private val scanCallback = object : ScanCallback() {
         @SuppressLint("MissingPermission")
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            if (result.device.address == ESP32_MAC_ADDRESS) {
+            Log.d("BLE", "Found device: ${result.device?.address}")
+            if (result.device?.address?.equals(ESP32_MAC_ADDRESS, ignoreCase = true) == true) {
                 Log.d("BLE", "Found target device")
                 stopBleScan()
+
+                runOnUiThread {
+                    connectionStatusLabel.text = "Device Found"
+                    connectionStatusLabel.setTextColor(Color.GREEN)
+                }
 
                 if (result.device.bondState == BluetoothDevice.BOND_BONDED) {
                     connectToDevice(result.device)
@@ -203,8 +222,28 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        override fun onBatchScanResults(results: List<ScanResult>) {
+            results.forEach { result ->
+                Log.d("BLE", "Batch device: ${result.device?.address}")
+            }
+        }
+
         override fun onScanFailed(errorCode: Int) {
-            Log.e("BLE", "Scan failed: $errorCode")
+            val errorMessage = when (errorCode) {
+                SCAN_FAILED_ALREADY_STARTED -> "Scan already started"
+                SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "App registration failed"
+                SCAN_FAILED_INTERNAL_ERROR -> "Internal error"
+                SCAN_FAILED_FEATURE_UNSUPPORTED -> "Feature unsupported"
+                SCAN_FAILED_OUT_OF_HARDWARE_RESOURCES -> "Out of hardware resources"
+                else -> "Unknown error"
+            }
+            Log.e("BLE", "Scan failed: $errorMessage ($errorCode)")
+
+            runOnUiThread {
+                connectionStatusLabel.text = "Scan Failed: $errorMessage"
+                connectionStatusLabel.setTextColor(Color.RED)
+            }
+
             handler.postDelayed({ startBleScan() }, RECONNECT_DELAY)
         }
     }
@@ -221,7 +260,13 @@ class MainActivity : AppCompatActivity() {
                     stopBleOperations()
                 }
 
-                BluetoothAdapter.STATE_ON -> startBleScan()
+                BluetoothAdapter.STATE_ON -> {
+                    if (checkPermissions()) {
+                        startBleScan()
+                    } else {
+                        requestPermissions()
+                    }
+                }
             }
         }
     }
@@ -311,11 +356,23 @@ class MainActivity : AppCompatActivity() {
         val bluetoothManager = getSystemService(BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
 
+        if (bluetoothAdapter == null) {
+            runOnUiThread {
+                connectionStatusLabel.text = "Bluetooth Not Supported"
+                connectionStatusLabel.setTextColor(Color.RED)
+            }
+            return
+        }
+
         if (!bluetoothAdapter.isEnabled) {
             val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
             startActivityForResult(enableBtIntent, 1)
         } else {
-            startBleScan()
+            if (checkPermissions()) {
+                startBleScan()
+            } else {
+                requestPermissions()
+            }
         }
     }
 
@@ -366,26 +423,39 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun startBleScan() {
+        if (!checkPermissions()) {
+            requestPermissions()
+            return
+        }
+
         runOnUiThread {
             connectionStatusLabel.text = "Scanning..."
             connectionStatusLabel.setTextColor(Color.YELLOW)
         }
 
-        if (ActivityCompat.checkSelfPermission(
-                this, Manifest.permission.BLUETOOTH_SCAN
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            ActivityCompat.requestPermissions(
-                this, arrayOf(Manifest.permission.BLUETOOTH_SCAN), 1
-            )
+        val scanner = bluetoothAdapter.bluetoothLeScanner ?: run {
+            Log.e("BLE", "Cannot get scanner instance")
+            runOnUiThread {
+                connectionStatusLabel.text = "Bluetooth Error"
+                connectionStatusLabel.setTextColor(Color.RED)
+            }
             return
         }
 
-        val scanner = bluetoothAdapter.bluetoothLeScanner ?: return
-        val filter = ScanFilter.Builder().setDeviceAddress(ESP32_MAC_ADDRESS).build()
-        val settings =
-            ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
-        scanner.startScan(listOf(filter), settings, scanCallback)
+        try {
+            val filter = ScanFilter.Builder().setDeviceAddress(ESP32_MAC_ADDRESS).build()
+            val settings = ScanSettings.Builder()
+                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                .build()
+            scanner.startScan(listOf(filter), settings, scanCallback)
+        } catch (e: Exception) {
+            Log.e("BLE", "Scan failed", e)
+            runOnUiThread {
+                connectionStatusLabel.text = "Scan Failed"
+                connectionStatusLabel.setTextColor(Color.RED)
+            }
+            handler.postDelayed({ startBleScan() }, RECONNECT_DELAY)
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -394,7 +464,11 @@ class MainActivity : AppCompatActivity() {
                 this, Manifest.permission.BLUETOOTH_SCAN
             ) == PackageManager.PERMISSION_GRANTED
         ) {
-            bluetoothAdapter.bluetoothLeScanner?.stopScan(scanCallback)
+            try {
+                bluetoothAdapter.bluetoothLeScanner?.stopScan(scanCallback)
+            } catch (e: Exception) {
+                Log.e("BLE", "Error stopping scan", e)
+            }
         }
     }
 
@@ -621,12 +695,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun playTrunkSound() {
-        mediaTrunk?.start() // Reuse mediaLock or create a new MediaPlayer instance for trunk sound
-
+        mediaTrunk?.start()
     }
 
     private fun playLocateMeSound() {
-        mediaLocate?.start() // Reuse mediaConnect or create a new MediaPlayer instance for locate me sound
+        mediaLocate?.start()
     }
 
     @SuppressLint("MissingPermission")
@@ -635,11 +708,21 @@ class MainActivity : AppCompatActivity() {
 
         isPairingInProgress = true
         try {
-            device.setPin(PASSKEY.toByteArray())
-            device.createBond()
-            runOnUiThread {
-                connectionStatusLabel.text = "Pairing..."
-                connectionStatusLabel.setTextColor(Color.YELLOW)
+            // Set the PIN for pairing
+            val setPinMethod = device.javaClass.getMethod("setPin", ByteArray::class.java)
+            setPinMethod.invoke(device, PASSKEY.toByteArray())
+
+            // Initiate pairing
+            val createBondMethod = device.javaClass.getMethod("createBond")
+            val result = createBondMethod.invoke(device) as Boolean
+
+            if (result) {
+                runOnUiThread {
+                    connectionStatusLabel.text = "Pairing..."
+                    connectionStatusLabel.setTextColor(Color.YELLOW)
+                }
+            } else {
+                throw Exception("Pairing initiation failed")
             }
         } catch (e: Exception) {
             isPairingInProgress = false
@@ -657,6 +740,57 @@ class MainActivity : AppCompatActivity() {
         connectionTimeoutHandler.removeCallbacksAndMessages(null)
         bleOperationQueue.clear()
         bluetoothGatt?.disconnect()
+    }
+
+    private fun checkPermissions(): Boolean {
+        return REQUIRED_PERMISSIONS.all { permission ->
+            ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun requestPermissions() {
+        ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSION_REQUEST_CODE)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                startBleScan()
+            } else {
+                Toast.makeText(
+                    this,
+                    "Permissions are required for Bluetooth functionality",
+                    Toast.LENGTH_LONG
+                ).show()
+                runOnUiThread {
+                    connectionStatusLabel.text = "Permissions Required"
+                    connectionStatusLabel.setTextColor(Color.RED)
+                }
+            }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 1) {
+            if (resultCode == RESULT_OK) {
+                if (checkPermissions()) {
+                    startBleScan()
+                } else {
+                    requestPermissions()
+                }
+            } else {
+                runOnUiThread {
+                    connectionStatusLabel.text = "Bluetooth Required"
+                    connectionStatusLabel.setTextColor(Color.RED)
+                }
+            }
+        }
     }
 
     inner class BleWorker : Runnable {
@@ -686,5 +820,7 @@ class MainActivity : AppCompatActivity() {
         bluetoothGatt?.close()
         mediaLock?.release()
         mediaConnect?.release()
+        mediaTrunk?.release()
+        mediaLocate?.release()
     }
 }
