@@ -57,8 +57,8 @@ class MainActivity : AppCompatActivity() {
     private var lastRssiValue = 0
 
     // Thresholds
-    private val UNLOCK_THRESHOLD = -45
-    private val LOCK_THRESHOLD = -75
+    private val UNLOCK_THRESHOLD = -65
+    private val LOCK_THRESHOLD = -80
     private val PROXIMITY_CONFIRMATIONS_NEEDED = 3
 
     // Threading
