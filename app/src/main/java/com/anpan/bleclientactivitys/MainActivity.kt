@@ -36,11 +36,11 @@ import java.util.concurrent.LinkedBlockingQueue
 class MainActivity : AppCompatActivity() {
 
     // BLE Configuration
-    private val SERVICE_UUID = UUID.fromString("726f72c1-055d-4f94-b090-c1afeec24782")
-    private val CHAR_NOTIFY_UUID = UUID.fromString("c1cf0c5d-d07f-4f7c-ad2e-9cb3e49286b4")
-    private val CHAR_WRITE_UUID = UUID.fromString("b12523bb-5e18-41fa-a498-cceb16bb7628")
-    private val ESP32_MAC_ADDRESS = "5C:01:3B:9B:90:DD"
-    private val PASSKEY = "123456"
+    private val SERVICE_UUID = UUID.fromString("726f72c1-055d-4f94-b090-c1afeec24780")
+    private val CHAR_NOTIFY_UUID = UUID.fromString("c1cf0c5d-d07f-4f7c-ad2e-9cb3e49286b2")
+    private val CHAR_WRITE_UUID = UUID.fromString("b12523bb-5e18-41fa-a498-cceb16bb7626")
+    private val ESP32_MAC_ADDRESS = "5C:01:3B:95:90:AA"
+    private val PASSKEY = "151784"
 
     // UI Components
     private lateinit var connectionStatusLabel: TextView
@@ -59,6 +59,8 @@ class MainActivity : AppCompatActivity() {
     // Audio Feedback
     private var mediaLock: MediaPlayer? = null
     private var mediaConnect: MediaPlayer? = null
+    private var mediaTrunk: MediaPlayer? = null
+    private var mediaLocate: MediaPlayer? = null
 
     // State Management
     private var currentLockStatus = "none" // "none", "locked", "unlocked"
@@ -285,6 +287,8 @@ class MainActivity : AppCompatActivity() {
         // Setup audio feedback
         mediaLock = MediaPlayer.create(this, R.raw.carlocksound)
         mediaConnect = MediaPlayer.create(this, R.raw.carstartsound)
+        mediaTrunk = MediaPlayer.create(this, R.raw.fartsound)
+        mediaLocate = MediaPlayer.create(this, R.raw.whistlesound)
 
         // Register receivers
         registerReceiver(
@@ -331,7 +335,7 @@ class MainActivity : AppCompatActivity() {
             isManualLock = false
             sendCommand("UNLOCK")
             currentLockStatus = "unlocked"
-            playLockSound()
+            playUnLockSound()
             unlockButton.isEnabled = false
             locateMeButton.isEnabled = false
             trunkButton.isEnabled = false
@@ -341,6 +345,7 @@ class MainActivity : AppCompatActivity() {
             isLockButtonEnabled = lockButton.isEnabled
             responseLabel.text = SpannableString("Opening Trunk \n\uD83D\uDE97")
             sendCommand("TRUNK")
+            playTrunkSound()
             trunkButton.isEnabled = false
             lockButton.isEnabled = false
             unlockButton.isEnabled = false
@@ -351,6 +356,7 @@ class MainActivity : AppCompatActivity() {
             isLockButtonEnabled = lockButton.isEnabled
             responseLabel.text = SpannableString("Locating...\n\uD83D\uDE97")
             sendCommand("LOCATE")
+            playLocateMeSound()
             locateMeButton.isEnabled = false
             lockButton.isEnabled = false
             unlockButton.isEnabled = false
@@ -509,7 +515,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 currentLockStatus = "unlocked"
                 lastRssiTriggerTime = currentTime
-                playLockSound()
+                playUnLockSound()
             }
 
             rssi < LOCK_THRESHOLD && currentLockStatus == "unlocked" -> {
@@ -602,12 +608,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun playUnLockSound() {
+        mediaLock?.start()
+    }
+
     private fun playLockSound() {
         mediaLock?.start()
         handler.postDelayed({
             mediaLock?.pause()
             mediaLock?.seekTo(0)
         }, 335)
+    }
+
+    private fun playTrunkSound() {
+        mediaTrunk?.start() // Reuse mediaLock or create a new MediaPlayer instance for trunk sound
+
+    }
+
+    private fun playLocateMeSound() {
+        mediaLocate?.start() // Reuse mediaConnect or create a new MediaPlayer instance for locate me sound
     }
 
     @SuppressLint("MissingPermission")
