@@ -268,6 +268,7 @@ class MainActivity : AppCompatActivity() {
         Thread(BleWorker()).start()
     }
 
+    @SuppressLint("MissingPermission")
     private fun setupBluetooth() {
         val bluetoothManager = getSystemService(BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
@@ -586,6 +587,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    @SuppressLint("MissingPermission")
     private fun stopBleOperations() {
         handler.removeCallbacksAndMessages(null)
         connectionTimeoutHandler.removeCallbacksAndMessages(null)
