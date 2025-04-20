@@ -22,6 +22,7 @@ import android.graphics.Color
 import android.media.MediaPlayer
 import android.os.Build
 import android.os.Bundle
+import android.os.CountDownTimer
 import android.os.Handler
 import android.os.Looper
 import android.text.SpannableString
@@ -67,6 +68,7 @@ class MainActivity : AppCompatActivity() {
     private var currentLockStatus = "none" // "none", "locked", "unlocked"
     private var isManualLock = false
     private var isLockButtonEnabled = true
+
     //private var proximityConfirmedCount = 0
     private var isPairingInProgress = false
 
@@ -81,6 +83,10 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val bleOperationQueue = LinkedBlockingQueue<() -> Unit>()
     private val connectionTimeoutHandler = Handler(Looper.getMainLooper())
+
+    //Auto Close
+    private var inactivityTimer: CountDownTimer? = null
+    private val INACTIVITY_TIMEOUT: Long = 5 * 60 * 1000 // 5 minutes
 
     // Permissions
     private val REQUIRED_PERMISSIONS = arrayOf(
@@ -353,6 +359,42 @@ class MainActivity : AppCompatActivity() {
 
         // Start BLE worker thread
         Thread(BleWorker()).start()
+        startInactivityTimer()
+    }
+
+    private fun startInactivityTimer() {
+        inactivityTimer?.cancel()
+        inactivityTimer = object : CountDownTimer(INACTIVITY_TIMEOUT, 1000) {
+            override fun onTick(millisUntilFinished: Long) {
+                // Do nothing
+            }
+
+            override fun onFinish() {
+                // Close the app
+                finish()
+            }
+        }
+        inactivityTimer?.start()
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        resetInactivityTimer()
+    }
+
+    private fun resetInactivityTimer() {
+        inactivityTimer?.cancel()
+        inactivityTimer?.start()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        startInactivityTimer()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        inactivityTimer?.cancel()
     }
 
     @SuppressLint("MissingPermission")
@@ -448,9 +490,8 @@ class MainActivity : AppCompatActivity() {
 
         try {
             val filter = ScanFilter.Builder().setDeviceAddress(ESP32_MAC_ADDRESS).build()
-            val settings = ScanSettings.Builder()
-                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-                .build()
+            val settings =
+                ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
             scanner.startScan(listOf(filter), settings, scanCallback)
         } catch (e: Exception) {
             Log.e("BLE", "Scan failed", e)
@@ -753,9 +794,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE) {
@@ -763,9 +802,7 @@ class MainActivity : AppCompatActivity() {
                 startBleScan()
             } else {
                 Toast.makeText(
-                    this,
-                    "Permissions are required for Bluetooth functionality",
-                    Toast.LENGTH_LONG
+                    this, "Permissions are required for Bluetooth functionality", Toast.LENGTH_LONG
                 ).show()
                 runOnUiThread {
                     connectionStatusLabel.text = "Permissions Required"
@@ -822,5 +859,6 @@ class MainActivity : AppCompatActivity() {
         mediaConnect?.release()
         mediaTrunk?.release()
         mediaLocate?.release()
+        inactivityTimer?.cancel()
     }
 }
