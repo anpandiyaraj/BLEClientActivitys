@@ -50,19 +50,17 @@ class MainActivity : AppCompatActivity() {
     private var isManualLock = false
     private var isLockButtonEnabled = true
     private var proximityConfirmedCount = 0
+    private var isPairingInProgress = false
 
     // RSSI Processing
-    private var emaRssi = 0.0
+    private val rssiHistory = LinkedBlockingQueue<Int>()
     private var lastRssiTriggerTime = 0L
     private var lastRssiValue = 0
-    private var lastProximityState = ProximityState.FAR
 
     // Thresholds
-    private val UNLOCK_THRESHOLD = -85
-    private val LOCK_THRESHOLD = -90
+    private val UNLOCK_THRESHOLD = -72
+    private val LOCK_THRESHOLD = -93
     private val PROXIMITY_CONFIRMATIONS_NEEDED = 3
-    private val STRONG_SIGNAL_THRESHOLD = -70
-    private val ALPHA = 0.6 // EMA smoothing factor
 
     // Threading
     private val handler = Handler(Looper.getMainLooper())
@@ -70,16 +68,14 @@ class MainActivity : AppCompatActivity() {
     private val connectionTimeoutHandler = Handler(Looper.getMainLooper())
 
     companion object {
-        private const val RSSI_UPDATE_INTERVAL = 500L
-        private const val RSSI_CONFIRMATION_DELAY = 1500L
+        private const val RSSI_HISTORY_SIZE = 5
+        private const val RSSI_UPDATE_INTERVAL = 1000L
+        private const val RSSI_CONFIRMATION_DELAY = 2000L
         private const val CONNECTION_TIMEOUT = 10000L
         private const val RECONNECT_DELAY = 5000L
     }
 
-    private enum class ProximityState {
-        FAR, NEAR, VERY_NEAR
-    }
-
+    // BLE Callbacks
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -167,7 +163,7 @@ class MainActivity : AppCompatActivity() {
 
         override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.d("RSSI", "Raw RSSI: $rssi")
+                Log.d("BLE", "RSSI: $rssi")
                 processRssiValue(rssi)
             } else {
                 Log.e("BLE", "Failed to read RSSI: $status")
@@ -181,7 +177,12 @@ class MainActivity : AppCompatActivity() {
             if (result.device.address == ESP32_MAC_ADDRESS) {
                 Log.d("BLE", "Found target device")
                 stopBleScan()
-                connectToDevice(result.device)
+
+                if (result.device.bondState == BluetoothDevice.BOND_BONDED) {
+                    connectToDevice(result.device)
+                } else {
+                    initiatePairing(result.device)
+                }
             }
         }
 
@@ -208,6 +209,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val bondStateReceiver = object : BroadcastReceiver() {
+        @SuppressLint("MissingPermission")
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == BluetoothDevice.ACTION_BOND_STATE_CHANGED) {
                 val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -219,18 +221,21 @@ class MainActivity : AppCompatActivity() {
                 if (device?.address == ESP32_MAC_ADDRESS) {
                     when (device.bondState) {
                         BluetoothDevice.BOND_BONDED -> {
+                            isPairingInProgress = false
                             Log.d("BLE", "Device bonded")
-                            bleOperationQueue.add {
-                                if (ActivityCompat.checkSelfPermission(
-                                        this@MainActivity,
-                                        Manifest.permission.BLUETOOTH_CONNECT
-                                    ) == PackageManager.PERMISSION_GRANTED
-                                ) {
-                                    bluetoothGatt?.discoverServices()
-                                }
+                            if (bluetoothGatt == null) {
+                                connectToDevice(device)
                             }
                         }
-                        BluetoothDevice.BOND_NONE -> initiatePairing(device)
+                        BluetoothDevice.BOND_BONDING -> {
+                            isPairingInProgress = true
+                            Log.d("BLE", "Device bonding in progress")
+                        }
+                        BluetoothDevice.BOND_NONE -> {
+                            isPairingInProgress = false
+                            Log.d("BLE", "Device unpaired")
+                            // Don't automatically re-pair unless it was a manual operation
+                        }
                     }
                 }
             }
@@ -375,14 +380,18 @@ class MainActivity : AppCompatActivity() {
             connectionStatusLabel.setTextColor(Color.YELLOW)
         }
 
+        if (device.bondState != BluetoothDevice.BOND_BONDED) {
+            Log.d("BLE", "Device not bonded, initiating pairing")
+            initiatePairing(device)
+            return
+        }
+
         connectionTimeoutHandler.postDelayed({
-            if (bluetoothGatt?.device?.bondState != BluetoothDevice.BOND_BONDED) {
-                runOnUiThread {
-                    connectionStatusLabel.text = "Connection Timeout"
-                    connectionStatusLabel.setTextColor(Color.RED)
-                }
-                bluetoothGatt?.disconnect()
+            runOnUiThread {
+                connectionStatusLabel.text = "Connection Timeout"
+                connectionStatusLabel.setTextColor(Color.RED)
             }
+            bluetoothGatt?.disconnect()
         }, CONNECTION_TIMEOUT)
 
         bluetoothGatt = device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
@@ -429,30 +438,50 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processRssiValue(rssi: Int) {
-        emaRssi = ALPHA * rssi + (1 - ALPHA) * emaRssi
-        val smoothedRssi = emaRssi.toInt()
-        lastRssiValue = smoothedRssi
-
-        Log.d("RSSI", "Smoothed RSSI: $smoothedRssi, State: $currentLockStatus, ManualLock: $isManualLock")
-
-        val newProximityState = when {
-            smoothedRssi > STRONG_SIGNAL_THRESHOLD -> ProximityState.VERY_NEAR
-            smoothedRssi > UNLOCK_THRESHOLD -> ProximityState.NEAR
-            else -> ProximityState.FAR
+        if (rssiHistory.size >= RSSI_HISTORY_SIZE) {
+            rssiHistory.poll()
         }
+        rssiHistory.add(rssi)
+        lastRssiValue = rssi
 
-        if (newProximityState != lastProximityState) {
-            lastProximityState = newProximityState
-            handleDistanceChange(smoothedRssi)
+        if (rssiHistory.size >= RSSI_HISTORY_SIZE) {
+            val smoothedRssi = calculateSmoothedRssi()
+            if (shouldAutoUnlock(smoothedRssi) || shouldAutoLock(smoothedRssi)) {
+                handleDistanceChange(smoothedRssi)
+            }
         }
+    }
+
+    private fun calculateSmoothedRssi(): Int {
+        val sorted = rssiHistory.sorted()
+        return sorted[rssiHistory.size / 2]
+    }
+
+    private fun shouldAutoUnlock(rssi: Int): Boolean {
+        if (isManualLock) return false
+
+        if (rssi > LOCK_THRESHOLD ) {
+           return true
+                   }
+        return false
+    }
+
+    private fun shouldAutoLock(rssi: Int): Boolean {
+        if (rssi < LOCK_THRESHOLD) {
+            proximityConfirmedCount = 0
+            return (currentLockStatus == "unlocked")
+        }
+        return false
     }
 
     private fun handleDistanceChange(rssi: Int) {
         val currentTime = System.currentTimeMillis()
+        if (currentTime - lastRssiTriggerTime < RSSI_CONFIRMATION_DELAY) {
+            return
+        }
 
-        if (rssi > STRONG_SIGNAL_THRESHOLD && !isManualLock) {
-            if (currentLockStatus != "unlocked" && currentTime - lastRssiTriggerTime > 1000) {
-                Log.d("AUTO", "Immediate UNLOCK (strong signal)")
+        when {
+            rssi > LOCK_THRESHOLD && (currentLockStatus == "none" || currentLockStatus == "locked") -> {
                 sendCommand("UNLOCK")
                 runOnUiThread {
                     responseLabel.text = SpannableString("Auto Unlocked \n\uD83D\uDE97")
@@ -464,48 +493,19 @@ class MainActivity : AppCompatActivity() {
                 currentLockStatus = "unlocked"
                 lastRssiTriggerTime = currentTime
                 playLockSound()
-                return
-            }
-        }
-
-        when {
-            rssi > UNLOCK_THRESHOLD && !isManualLock && (currentLockStatus == "none" || currentLockStatus == "locked") -> {
-                proximityConfirmedCount++
-                if (proximityConfirmedCount >= PROXIMITY_CONFIRMATIONS_NEEDED &&
-                    currentTime - lastRssiTriggerTime > RSSI_CONFIRMATION_DELAY) {
-                    Log.d("AUTO", "Threshold UNLOCK")
-                    sendCommand("UNLOCK")
-                    runOnUiThread {
-                        responseLabel.text = SpannableString("Auto Unlocked \n\uD83D\uDE97")
-                        lockButton.isEnabled = true
-                        unlockButton.isEnabled = false
-                        trunkButton.isEnabled = true
-                        locateMeButton.isEnabled = true
-                    }
-                    currentLockStatus = "unlocked"
-                    lastRssiTriggerTime = currentTime
-                    proximityConfirmedCount = 0
-                    playLockSound()
-                }
             }
             rssi < LOCK_THRESHOLD && currentLockStatus == "unlocked" -> {
-                if (currentTime - lastRssiTriggerTime > RSSI_CONFIRMATION_DELAY) {
-                    Log.d("AUTO", "Threshold LOCK")
-                    sendCommand("LOCK")
-                    runOnUiThread {
-                        responseLabel.text = SpannableString("Auto Locked \n\uD83D\uDE97")
-                        lockButton.isEnabled = false
-                        unlockButton.isEnabled = true
-                        trunkButton.isEnabled = true
-                        locateMeButton.isEnabled = true
-                    }
-                    currentLockStatus = "locked"
-                    lastRssiTriggerTime = currentTime
-                    playLockSound()
+                sendCommand("LOCK")
+                runOnUiThread {
+                    responseLabel.text = SpannableString("Auto Locked \n\uD83D\uDE97")
+                    lockButton.isEnabled = false
+                    unlockButton.isEnabled = true
+                    trunkButton.isEnabled = true
+                    locateMeButton.isEnabled = true
                 }
-            }
-            else -> {
-                proximityConfirmedCount = 0
+                currentLockStatus = "locked"
+                lastRssiTriggerTime = currentTime
+                playLockSound()
             }
         }
     }
@@ -590,11 +590,23 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun initiatePairing(device: BluetoothDevice) {
+        if (isPairingInProgress) return
+
+        isPairingInProgress = true
         try {
             device.setPin(PASSKEY.toByteArray())
             device.createBond()
+            runOnUiThread {
+                connectionStatusLabel.text = "Pairing..."
+                connectionStatusLabel.setTextColor(Color.YELLOW)
+            }
         } catch (e: Exception) {
+            isPairingInProgress = false
             Log.e("BLE", "Pairing failed", e)
+            runOnUiThread {
+                connectionStatusLabel.text = "Pairing Failed"
+                connectionStatusLabel.setTextColor(Color.RED)
+            }
         }
     }
 
