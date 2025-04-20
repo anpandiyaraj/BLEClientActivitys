@@ -21,11 +21,11 @@ import java.util.concurrent.LinkedBlockingQueue
 class MainActivity : AppCompatActivity() {
 
     // BLE Configuration
-    private val SERVICE_UUID = UUID.fromString("726f72c1-055d-4f94-b090-c1afeec24782")
-    private val CHAR_NOTIFY_UUID = UUID.fromString("c1cf0c5d-d07f-4f7c-ad2e-9cb3e49286b4")
-    private val CHAR_WRITE_UUID = UUID.fromString("b12523bb-5e18-41fa-a498-cceb16bb7628")
-    private val ESP32_MAC_ADDRESS = "5C:01:3B:9B:90:DD"
-    private val PASSKEY = "123456"
+    private val SERVICE_UUID = UUID.fromString("726f72c1-055d-4f94-b090-c1afeec24780")
+    private val CHAR_NOTIFY_UUID = UUID.fromString("c1cf0c5d-d07f-4f7c-ad2e-9cb3e49286b2")
+    private val CHAR_WRITE_UUID = UUID.fromString("b12523bb-5e18-41fa-a498-cceb16bb7626")
+    private val ESP32_MAC_ADDRESS = "5C:01:3B:95:90:AA"
+    private val PASSKEY = "151784"
 
     // UI Components
     private lateinit var connectionStatusLabel: TextView
@@ -47,20 +47,22 @@ class MainActivity : AppCompatActivity() {
 
     // State Management
     private var currentLockStatus = "none" // "none", "locked", "unlocked"
-    //private var isManualOperation = false
-    private var isManualLock = false // New flag for manual lock state
+    private var isManualLock = false
     private var isLockButtonEnabled = true
     private var proximityConfirmedCount = 0
 
     // RSSI Processing
-    private val rssiHistory = LinkedBlockingQueue<Int>()
+    private var emaRssi = 0.0
     private var lastRssiTriggerTime = 0L
     private var lastRssiValue = 0
+    private var lastProximityState = ProximityState.FAR
 
     // Thresholds
-    private val UNLOCK_THRESHOLD = -88
-    private val LOCK_THRESHOLD = -93
+    private val UNLOCK_THRESHOLD = -85
+    private val LOCK_THRESHOLD = -90
     private val PROXIMITY_CONFIRMATIONS_NEEDED = 3
+    private val STRONG_SIGNAL_THRESHOLD = -70
+    private val ALPHA = 0.6 // EMA smoothing factor
 
     // Threading
     private val handler = Handler(Looper.getMainLooper())
@@ -68,14 +70,16 @@ class MainActivity : AppCompatActivity() {
     private val connectionTimeoutHandler = Handler(Looper.getMainLooper())
 
     companion object {
-        private const val RSSI_HISTORY_SIZE = 5
-        private const val RSSI_UPDATE_INTERVAL = 1000L
-        private const val RSSI_CONFIRMATION_DELAY = 2000L
+        private const val RSSI_UPDATE_INTERVAL = 500L
+        private const val RSSI_CONFIRMATION_DELAY = 1500L
         private const val CONNECTION_TIMEOUT = 10000L
         private const val RECONNECT_DELAY = 5000L
     }
 
-    // BLE Callbacks
+    private enum class ProximityState {
+        FAR, NEAR, VERY_NEAR
+    }
+
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -121,7 +125,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.d("BLE", "Disconnected")
-                    isManualLock = false // Reset manual lock flag on disconnection
+                    isManualLock = false
                     stopRssiUpdates()
                     scheduleReconnect()
                 }
@@ -163,7 +167,7 @@ class MainActivity : AppCompatActivity() {
 
         override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.d("BLE", "RSSI: $rssi")
+                Log.d("RSSI", "Raw RSSI: $rssi")
                 processRssiValue(rssi)
             } else {
                 Log.e("BLE", "Failed to read RSSI: $status")
@@ -195,7 +199,7 @@ class MainActivity : AppCompatActivity() {
                         connectionStatusLabel.text = "Bluetooth Off"
                         connectionStatusLabel.setTextColor(Color.RED)
                     }
-                    isManualLock = false // Reset manual lock flag when Bluetooth turns off
+                    isManualLock = false
                     stopBleOperations()
                 }
                 BluetoothAdapter.STATE_ON -> startBleScan()
@@ -286,8 +290,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupButtons() {
         lockButton.setOnClickListener {
-           // isManualOperation = true
-            isManualLock = true // Set manual lock flag
+            isManualLock = true
             sendCommand("LOCK")
             currentLockStatus = "locked"
             playLockSound()
@@ -298,8 +301,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         unlockButton.setOnClickListener {
-           // isManualOperation = true
-            isManualLock = false // Reset manual lock flag on manual unlock
+            isManualLock = false
             sendCommand("UNLOCK")
             currentLockStatus = "unlocked"
             playLockSound()
@@ -427,56 +429,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processRssiValue(rssi: Int) {
-        if (rssiHistory.size >= RSSI_HISTORY_SIZE) {
-            rssiHistory.poll()
+        emaRssi = ALPHA * rssi + (1 - ALPHA) * emaRssi
+        val smoothedRssi = emaRssi.toInt()
+        lastRssiValue = smoothedRssi
+
+        Log.d("RSSI", "Smoothed RSSI: $smoothedRssi, State: $currentLockStatus, ManualLock: $isManualLock")
+
+        val newProximityState = when {
+            smoothedRssi > STRONG_SIGNAL_THRESHOLD -> ProximityState.VERY_NEAR
+            smoothedRssi > UNLOCK_THRESHOLD -> ProximityState.NEAR
+            else -> ProximityState.FAR
         }
-        rssiHistory.add(rssi)
-        lastRssiValue = rssi
 
-        if (rssiHistory.size >= RSSI_HISTORY_SIZE) {
-            val smoothedRssi = calculateSmoothedRssi()
-            if (shouldAutoUnlock(smoothedRssi) || shouldAutoLock(smoothedRssi)) {
-                handleDistanceChange(smoothedRssi)
-            }
+        if (newProximityState != lastProximityState) {
+            lastProximityState = newProximityState
+            handleDistanceChange(smoothedRssi)
         }
-    }
-
-    private fun calculateSmoothedRssi(): Int {
-        val sorted = rssiHistory.sorted()
-        return sorted[rssiHistory.size / 2]
-    }
-
-    private fun shouldAutoUnlock(rssi: Int): Boolean {
-        if (isManualLock) return false // Disable auto-unlock if manually locked
-
-        if (rssi > UNLOCK_THRESHOLD) {
-            proximityConfirmedCount++
-            if (proximityConfirmedCount >= PROXIMITY_CONFIRMATIONS_NEEDED) {
-                proximityConfirmedCount = 0
-                return (!isManualLock &&
-                        (currentLockStatus == "none" || currentLockStatus == "locked"))
-            }
-        } else {
-            proximityConfirmedCount = 0
-        }
-        return false
-    }
-
-    private fun shouldAutoLock(rssi: Int): Boolean {
-        if (rssi < LOCK_THRESHOLD) {
-            return (currentLockStatus == "unlocked")
-        }
-        return false
     }
 
     private fun handleDistanceChange(rssi: Int) {
         val currentTime = System.currentTimeMillis()
-        if (currentTime - lastRssiTriggerTime < RSSI_CONFIRMATION_DELAY) {
-            return
-        }
 
-        when {
-            rssi > UNLOCK_THRESHOLD && (currentLockStatus == "none" || currentLockStatus == "locked") -> {
+        if (rssi > STRONG_SIGNAL_THRESHOLD && !isManualLock) {
+            if (currentLockStatus != "unlocked" && currentTime - lastRssiTriggerTime > 1000) {
+                Log.d("AUTO", "Immediate UNLOCK (strong signal)")
                 sendCommand("UNLOCK")
                 runOnUiThread {
                     responseLabel.text = SpannableString("Auto Unlocked \n\uD83D\uDE97")
@@ -488,19 +464,48 @@ class MainActivity : AppCompatActivity() {
                 currentLockStatus = "unlocked"
                 lastRssiTriggerTime = currentTime
                 playLockSound()
+                return
+            }
+        }
+
+        when {
+            rssi > UNLOCK_THRESHOLD && !isManualLock && (currentLockStatus == "none" || currentLockStatus == "locked") -> {
+                proximityConfirmedCount++
+                if (proximityConfirmedCount >= PROXIMITY_CONFIRMATIONS_NEEDED &&
+                    currentTime - lastRssiTriggerTime > RSSI_CONFIRMATION_DELAY) {
+                    Log.d("AUTO", "Threshold UNLOCK")
+                    sendCommand("UNLOCK")
+                    runOnUiThread {
+                        responseLabel.text = SpannableString("Auto Unlocked \n\uD83D\uDE97")
+                        lockButton.isEnabled = true
+                        unlockButton.isEnabled = false
+                        trunkButton.isEnabled = true
+                        locateMeButton.isEnabled = true
+                    }
+                    currentLockStatus = "unlocked"
+                    lastRssiTriggerTime = currentTime
+                    proximityConfirmedCount = 0
+                    playLockSound()
+                }
             }
             rssi < LOCK_THRESHOLD && currentLockStatus == "unlocked" -> {
-                sendCommand("LOCK")
-                runOnUiThread {
-                    responseLabel.text = SpannableString("Auto Locked \n\uD83D\uDE97")
-                    lockButton.isEnabled = false
-                    unlockButton.isEnabled = true
-                    trunkButton.isEnabled = true
-                    locateMeButton.isEnabled = true
+                if (currentTime - lastRssiTriggerTime > RSSI_CONFIRMATION_DELAY) {
+                    Log.d("AUTO", "Threshold LOCK")
+                    sendCommand("LOCK")
+                    runOnUiThread {
+                        responseLabel.text = SpannableString("Auto Locked \n\uD83D\uDE97")
+                        lockButton.isEnabled = false
+                        unlockButton.isEnabled = true
+                        trunkButton.isEnabled = true
+                        locateMeButton.isEnabled = true
+                    }
+                    currentLockStatus = "locked"
+                    lastRssiTriggerTime = currentTime
+                    playLockSound()
                 }
-                currentLockStatus = "locked"
-                lastRssiTriggerTime = currentTime
-                playLockSound()
+            }
+            else -> {
+                proximityConfirmedCount = 0
             }
         }
     }
@@ -509,11 +514,10 @@ class MainActivity : AppCompatActivity() {
         when {
             value.contains("Unlocked", ignoreCase = true) -> {
                 currentLockStatus = "unlocked"
-                isManualLock = false // Reset manual lock flag on unlock
+                isManualLock = false
             }
             value.contains("Locked", ignoreCase = true) -> {
                 currentLockStatus = "locked"
-
             }
         }
     }
