@@ -855,6 +855,7 @@ class MainActivity : AppCompatActivity() {
         unregisterReceiver(bluetoothStateReceiver)
         stopBleOperations()
         bluetoothGatt?.close()
+        bluetoothGatt = null
         mediaLock?.release()
         mediaConnect?.release()
         mediaTrunk?.release()
